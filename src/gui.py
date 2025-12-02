@@ -206,6 +206,18 @@ class DeconvolutionGUI:
             anchor=tk.W
         )
         self.status_label.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+
+        # Botão para salvar a imagem deconvoluída
+        self.save_deconvolved_btn = tk.Button(
+            control_frame,
+            text="Salvar Imagem Deconvoluída",
+            command=self.save_deconvolved_image,
+            font=("Arial", 10),
+            padx=10,
+            pady=5,
+            state=tk.DISABLED
+        )
+        self.save_deconvolved_btn.pack(side=tk.RIGHT, padx=5)
     
     def add_log_message(self, message):
         """Adiciona uma mensagem à área de log."""
@@ -342,6 +354,44 @@ class DeconvolutionGUI:
         thread = threading.Thread(target=self._deconvolve_thread, args=(blur_type, algorithm_name))
         thread.daemon = True
         thread.start()
+
+    def save_deconvolved_image(self):
+        """Salva a imagem deconvoluída em um arquivo no diretório"""
+        if self. deconvolved_image is None:
+            return
+        
+        # Janela para escolher aonde salvar o arquivo
+        file_path = filedialog.asksaveasfilename(
+            title="Salvar Imagem Deconvoluída",
+            defaultextension=".png",
+            filetypes=[
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg"),
+                ("BMP", "*.bmp"),
+                ("TIFF", "*.tiff *.tif"),
+                ("Todos os arquivos", "*.*")
+            ]
+        )
+
+        if file_path:
+            try:
+                # Garantir que os valores estão no range [0, 1]
+                image_array = np.clip(self.deconvolved_image, 0, 1)
+                
+                # Converter para uint8
+                image_array = (image_array * 255).astype(np.uint8)
+                
+                # Converter para PIL Image
+                if len(image_array.shape) == 3:
+                    img = Image.fromarray(image_array, 'RGB')
+                else:
+                    img = Image.fromarray(image_array, 'L')
+                
+                # Salvar imagem
+                img.save(file_path)
+                messagebox.showinfo("Sucesso", f"Imagem deconvoluída salva em:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao salvar imagem: {e}")
     
     def _deconvolve_thread(self, blur_type, algorithm_name):
         """Executa a deconvolução em uma thread separada."""
@@ -390,6 +440,7 @@ class DeconvolutionGUI:
         if success:
             self.display_image(self.deconvolved_image, self.deconvolved_canvas)
             self.status_label.config(text="Deconvolução concluída com sucesso!", fg="green")
+            self.save_deconvolved_btn.config(state=tk.NORMAL)
         else:
             messagebox.showerror("Erro", f"Erro durante deconvolução: {error_msg}")
             self.status_label.config(text=f"Erro: {error_msg}", fg="red")
