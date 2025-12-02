@@ -2,12 +2,14 @@
 Módulo de algoritmos de deconvolução.
 """
 
+from src.algorithms.wiener import Wiener
 from .base import DeconvolutionAlgorithm
 from .richardson_lucy import RichardsonLucy
 
 # Registro de algoritmos disponíveis
 ALGORITHMS = {
     'richardson_lucy': RichardsonLucy,
+    'wiener': Wiener,
 }
 
 def get_algorithm(name):
