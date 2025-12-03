@@ -11,6 +11,7 @@ import os
 from .psf_generator import generate_gaussian_psf, generate_motion_psf
 from .deconvolution import deconvolve, get_available_algorithms
 from .logger import DeconvolutionLogger
+from .algorithms import get_algorithm
 
 
 class DeconvolutionGUI:
@@ -86,6 +87,10 @@ class DeconvolutionGUI:
         )
         blur_type_combo.grid(row=1, column=1, padx=5)
         blur_type_combo.bind("<<ComboboxSelected>>", self.on_blur_type_change)
+
+        # Descrição dinâmica do tipo de algoritmo
+        self.desc_label = tk.Label(params_frame, text="", font=("Arial", 8, "italic"), fg="gray50", wraplength=200)
+        self.desc_label.grid(row=0, column=2, padx=5)
         
         # Frame para parâmetros gaussianos
         self.gaussian_frame = tk.Frame(params_frame)
@@ -121,12 +126,26 @@ class DeconvolutionGUI:
         angle_entry = tk.Entry(self.motion_frame, textvariable=self.angle_var, width=8, font=("Arial", 9))
         angle_entry.grid(row=0, column=5, padx=5)
         
-        # Parâmetro de iterações (comum para ambos)
-        tk.Label(params_frame, text="Iterações:", font=("Arial", 9)).grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
-        self.iterations_var = tk.StringVar(value="30")
-        iterations_entry = tk.Entry(params_frame, textvariable=self.iterations_var, width=8, font=("Arial", 9))
-        iterations_entry.grid(row=3, column=1, padx=5, pady=5, sticky=tk.W)
+        # Parâmetro de iterações (para algoritmos que usam iterações)
+        self.lucy_frame = tk.Frame(params_frame)
+        self.lucy_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W)
         
+        tk.Label(self.lucy_frame, text="Iterações:", font=("Arial", 9)).grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.iterations_var = tk.StringVar(value="30")
+        iterations_entry = tk.Entry(self.lucy_frame, textvariable=self.iterations_var, width=8, font=("Arial", 9))
+        iterations_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        # Paramêtro balance para Wiener
+        self.wiener_frame = tk.Frame(params_frame)
+        self.wiener_frame.grid(row=3, column=2, columnspan=2, sticky=tk.W)
+
+        tk.Label(self.wiener_frame, text="Balance:", font=("Arial", 9)).grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.balance_var = tk.StringVar(value="0.01")
+        balance_entry = tk.Entry(self.wiener_frame, textvariable=self.balance_var, width=8, font=("Arial", 9))
+        balance_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+
+        algorithm_combo.bind("<<ComboboxSelected>>", self.on_algorithm_change)
+
         # Botão executar
         self.execute_btn = tk.Button(
             control_frame,
@@ -206,6 +225,21 @@ class DeconvolutionGUI:
             anchor=tk.W
         )
         self.status_label.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+
+        # Botão para salvar a imagem deconvoluída
+        self.save_deconvolved_btn = tk.Button(
+            control_frame,
+            text="Salvar Imagem Deconvoluída",
+            command=self.save_deconvolved_image,
+            font=("Arial", 10),
+            padx=10,
+            pady=5,
+            state=tk.DISABLED
+        )
+        self.save_deconvolved_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Inicializar estado da UI
+        self.on_algorithm_change()
     
     def add_log_message(self, message):
         """Adiciona uma mensagem à área de log."""
@@ -307,6 +341,7 @@ class DeconvolutionGUI:
         try:
             blur_type = self.blur_type_var.get()
             algorithm_name = self.algorithm_var.get()
+            algo_params = {}
             
             if blur_type == "gaussian":
                 size = int(self.size_var.get())
@@ -320,9 +355,19 @@ class DeconvolutionGUI:
                 if size <= 0 or length <= 0:
                     raise ValueError("Tamanho e comprimento devem ser positivos")
             
-            iterations = int(self.iterations_var.get())
-            if iterations <= 0:
-                raise ValueError("Iterações devem ser positivas")
+            # Validar parâmetros específicos do algoritmo
+            if algorithm_name == "richardson_lucy":
+                iterations = int(self.iterations_var.get())
+                if iterations <= 0:
+                    raise ValueError("Iterações devem ser positivas")
+                algo_params['num_iterations'] = iterations
+            elif algorithm_name == "wiener":
+                try:
+                    balance = float(self.balance_var.get())
+                    algo_params['balance'] = balance
+                except ValueError:
+                    raise ValueError("Balance deve ser um número válido")
+
         except ValueError as e:
             messagebox.showerror("Erro", f"Parâmetros inválidos: {e}")
             return
@@ -339,11 +384,50 @@ class DeconvolutionGUI:
         self.add_log_message("=" * 50)
         
         # Executar em thread separada para não travar a UI
-        thread = threading.Thread(target=self._deconvolve_thread, args=(blur_type, algorithm_name))
+        thread = threading.Thread(target=self._deconvolve_thread, args=(blur_type, algorithm_name, algo_params))
         thread.daemon = True
         thread.start()
+
+
+    def save_deconvolved_image(self):
+        """Salva a imagem deconvoluída em um arquivo no diretório"""
+        if self. deconvolved_image is None:
+            return
+        
+        # Janela para escolher aonde salvar o arquivo
+        file_path = filedialog.asksaveasfilename(
+            title="Salvar Imagem Deconvoluída",
+            defaultextension=".png",
+            filetypes=[
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg"),
+                ("BMP", "*.bmp"),
+                ("TIFF", "*.tiff *.tif"),
+                ("Todos os arquivos", "*.*")
+            ]
+        )
+
+        if file_path:
+            try:
+                # Garantir que os valores estão no range [0, 1]
+                image_array = np.clip(self.deconvolved_image, 0, 1)
+                
+                # Converter para uint8
+                image_array = (image_array * 255).astype(np.uint8)
+                
+                # Converter para PIL Image
+                if len(image_array.shape) == 3:
+                    img = Image.fromarray(image_array, 'RGB')
+                else:
+                    img = Image.fromarray(image_array, 'L')
+                
+                # Salvar imagem
+                img.save(file_path)
+                messagebox.showinfo("Sucesso", f"Imagem deconvoluída salva em:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao salvar imagem: {e}")
     
-    def _deconvolve_thread(self, blur_type, algorithm_name):
+    def _deconvolve_thread(self, blur_type, algorithm_name, algo_params):
         """Executa a deconvolução em uma thread separada."""
         try:
             # Criar logger com callback para atualizar a UI
@@ -364,16 +448,15 @@ class DeconvolutionGUI:
                 logger.info(f"PSF de movimento: tamanho={size}, comprimento={length}, ângulo={angle}°")
             
             # Aplicar deconvolução
-            iterations = int(self.iterations_var.get())
-            logger.info(f"Parâmetros: {iterations} iterações, clipping ativado")
+            logger.info(f"Parâmetros: {algo_params}, clipping ativado")
             
             deconvolved = deconvolve(
                 self.original_image,
                 psf,
                 algorithm_name=algorithm_name,
-                num_iterations=iterations,
                 clip=True,
-                logger=logger
+                logger=logger,
+                **algo_params
             )
             
             self.deconvolved_image = deconvolved
@@ -390,11 +473,31 @@ class DeconvolutionGUI:
         if success:
             self.display_image(self.deconvolved_image, self.deconvolved_canvas)
             self.status_label.config(text="Deconvolução concluída com sucesso!", fg="green")
+            self.save_deconvolved_btn.config(state=tk.NORMAL)
         else:
             messagebox.showerror("Erro", f"Erro durante deconvolução: {error_msg}")
             self.status_label.config(text=f"Erro: {error_msg}", fg="red")
         
         self.execute_btn.config(state=tk.NORMAL, text="Executar")
+
+    def on_algorithm_change(self, event=None):
+        algo_name = self.algorithm_var.get()
+        
+        # 1. Atualizar Descrição
+        try:
+            algo_instance = get_algorithm(algo_name)
+            self.desc_label.config(text=algo_instance.description)
+        except:
+            self.desc_label.config(text="")
+
+        # 2. Mostrar/Esconder Frames
+        self.lucy_frame.grid_remove()
+        self.wiener_frame.grid_remove()
+        
+        if algo_name == "richardson_lucy":
+            self.lucy_frame.grid()
+        elif algo_name == "wiener":
+            self.wiener_frame.grid()
 
 
 def main():
